@@ -7,6 +7,7 @@
 #include "runtime_context.h"
 #include "strings.h"
 #include "wl_client/gamescope_reshade.h"
+#include "wl_client/gamescope_private.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -23,6 +24,7 @@
 __attribute__((weak)) struct wl_proxy *wl_proxy_create(struct wl_proxy *factory, const struct wl_interface *interface);
 
 #define GAMESCOPE_RESHADE_INTERFACE_NAME "gamescope_reshade"
+#define GAMESCOPE_PRIVATE_INTERFACE_NAME "gamescope_private"
 #define GAMESCOPE_RESHADE_EFFECT_FILE "Sombrero.frag"
 #define GAMESCOPE_RESHADE_EFFECT_PATH "reshade/Shaders/" GAMESCOPE_RESHADE_EFFECT_FILE
 #define GAMESCOPE_RESHADE_WAIT_TIME_MS 500
@@ -31,6 +33,7 @@ static gamescope_reshade_wayland_config *gamescope_config;
 static struct wl_display *display = NULL;
 static struct wl_registry *registry = NULL;
 static struct gamescope_reshade *reshade_object = NULL;
+static struct gamescope_private *private_object = NULL;
 static gamescope_reshade_effect_ready_callback effect_ready_callback = NULL;
 static uint64_t gamescope_reshade_effect_request_time = 0;
 static bool gamescope_reshade_ipc_connected = false;
@@ -82,6 +85,10 @@ static void gamescope_reshade_wl_handle_global(void *data, struct wl_registry *r
         reshade_object = wl_registry_bind(registry, name, 
                                           &gamescope_reshade_interface, version);
     }
+    if (strcmp(interface, GAMESCOPE_PRIVATE_INTERFACE_NAME) == 0) {
+        private_object = wl_registry_bind(registry, name, 
+                                          &gamescope_private_interface, version);
+    }
 }
 
 bool is_gamescope_reshade_ipc_connected() {
@@ -95,6 +102,10 @@ static void gamescope_reshade_wl_server_disconnect() {
     if (reshade_object) {
         gamescope_reshade_destroy(reshade_object);
         reshade_object = NULL;
+    }
+    if (private_object) {
+        gamescope_private_destroy(private_object);
+        private_object = NULL;
     }
     if (registry) {
         wl_registry_destroy(registry);
@@ -151,6 +162,12 @@ static void gamescope_reshade_wl_server_connect() {
         }
 
         gamescope_reshade_set_effect(reshade_object, GAMESCOPE_RESHADE_EFFECT_FILE);
+
+        if (private_object) {
+            // https://github.com/ValveSoftware/gamescope/blob/ddf0d7/src/steamcompmgr.cpp#L2231
+            gamescope_private_execute(private_object, "cursor_composite", "2");
+        }
+
         int wl_result = wl_display_flush(display);
         if (wl_result >= 0) {
             gamescope_reshade_effect_request_time = get_epoch_time_ms();
@@ -160,7 +177,6 @@ static void gamescope_reshade_wl_server_connect() {
                 log_debug("gamescope_reshade_wl_server_connect error %d on wl_display_flush\n", wl_result);
             gamescope_reshade_wl_server_disconnect();
         }
-
     } else {
         if (config()->debug_ipc) log_debug("gamescope_reshade_wl_server_connect no reshade_object\n");
         gamescope_reshade_wl_server_disconnect();
@@ -174,7 +190,7 @@ static bool gamescope_reshade_wl_setup_ipc() {
 }
 
 static bool enable_gamescope_effect() {
-    if (!reshade_object) return false;
+    if (!display || !reshade_object) return false;
 
     if (config()->debug_ipc) log_debug("enable_gamescope_effect\n");
     gamescope_reshade_enable_effect(reshade_object);
@@ -184,10 +200,12 @@ static bool enable_gamescope_effect() {
 }
 
 static void disable_gamescope_effect() {
-    if (!reshade_object) return;
+    if (!display || !reshade_object) return;
     
     if (config()->debug_ipc) log_debug("disable_gamescope_effect\n");
     gamescope_reshade_disable_effect(reshade_object);
+    if (private_object) gamescope_private_execute(private_object, "cursor_composite", "1");
+
     wl_display_flush(display);
 }
 

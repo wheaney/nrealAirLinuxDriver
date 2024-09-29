@@ -116,6 +116,7 @@ set(SOURCES
     src/state.c
     src/strings.c
     src/system.c
+    src/wl_client/gamescope_private.c
     src/wl_client/gamescope_reshade.c
 )
 
